@@ -1,0 +1,103 @@
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+  padding: 0.75rem 1rem;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* A thin separator between logical groups, but not before the first one. */
+.group + .group {
+  padding-inline-start: 1.25rem;
+  border-inline-start: 1px solid var(--border);
+}
+
+.button,
+.toolButton,
+.toolButtonActive,
+.dangerButton {
+  padding: 0.45rem 0.9rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.button:hover:not(:disabled),
+.toolButton:hover,
+.dangerButton:hover {
+  background-color: var(--surface-hover);
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.toolButtonActive {
+  color: #ffffff;
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+.dangerButton {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.fieldLabel {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.colorInput {
+  width: 42px;
+  height: 32px;
+  padding: 2px;
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.rangeInput {
+  width: 110px;
+  cursor: pointer;
+}
+
+/*
+  Visually hidden but still focusable and clickable. `display: none` would stop
+  the programmatic .click() from opening the file dialog in some browsers.
+*/
+.hiddenFileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

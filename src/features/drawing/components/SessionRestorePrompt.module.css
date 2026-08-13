@@ -1,0 +1,44 @@
+.prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.7rem 1rem;
+  background-color: var(--info-surface);
+  border: 1px solid var(--info-border);
+  border-radius: 10px;
+}
+
+.text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.primary,
+.secondary {
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  font-size: 0.85rem;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.primary {
+  color: #ffffff;
+  background-color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.secondary {
+  color: var(--text);
+  background-color: var(--surface-raised);
+  border: 1px solid var(--border);
+}

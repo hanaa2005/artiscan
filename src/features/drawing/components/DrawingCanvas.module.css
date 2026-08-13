@@ -1,0 +1,25 @@
+.canvasFrame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: #ffffff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/*
+  The transparent layer that receives every pointer event.
+
+  touch-action: none is essential: without it the browser treats a finger drag
+  as a scroll/pan gesture, steals the pointer, and the stroke is cut short.
+*/
+.pointerOverlay {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  cursor: crosshair;
+  /* Stops the browser from selecting page text or showing a drag ghost. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}

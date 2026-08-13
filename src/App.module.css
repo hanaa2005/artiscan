@@ -1,0 +1,80 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  width: 100%;
+  max-width: 1200px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.8;
+  color: var(--text-muted);
+}
+
+/*
+  The canvas area grows to fill whatever height is left, but never gets squeezed
+  below a comfortable drawing size by a long debug panel - the page scrolls
+  instead.
+*/
+.canvasArea {
+  flex: 1 1 auto;
+  min-height: 60vh;
+  background-color: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.errorNotice,
+.successNotice {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  border-radius: 8px;
+}
+
+.errorNotice {
+  color: var(--danger);
+  background-color: var(--danger-surface);
+  border: 1px solid var(--danger-border);
+}
+
+.successNotice {
+  color: var(--success);
+  background-color: var(--success-surface);
+  border: 1px solid var(--success-border);
+}
+
+@media (max-width: 640px) {
+  .app {
+    padding: 0.6rem;
+  }
+
+  .title {
+    font-size: 1.1rem;
+  }
+
+  .canvasArea {
+    min-height: 50vh;
+  }
+}

@@ -1,0 +1,77 @@
+.panel {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.6rem 1rem;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  background-color: var(--surface-raised);
+  border: 0;
+  cursor: pointer;
+}
+
+.body {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.6rem 1rem 0.8rem;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.28rem 0;
+  font-size: 0.85rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.rowLabel {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Provenance note for a session imported from an older schema version. */
+.provenance,
+.provenanceWarning {
+  margin: 0.5rem 0 0;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.82rem;
+  line-height: 1.8;
+  border-radius: 8px;
+}
+
+.provenance {
+  color: var(--text-muted);
+  background-color: var(--info-surface);
+  border: 1px solid var(--info-border);
+}
+
+/* An incomplete history is a data-quality problem, so it reads as a warning. */
+.provenanceWarning {
+  color: var(--danger);
+  background-color: var(--danger-surface);
+  border: 1px solid var(--danger-border);
+}
+
+.rowValue {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  /* Session ids are long; let them wrap instead of stretching the panel. */
+  overflow-wrap: anywhere;
+  text-align: start;
+  direction: ltr;
+}
