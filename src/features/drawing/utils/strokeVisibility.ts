@@ -27,6 +27,14 @@ export interface ReplayResult {
    * one a redo would restore, exactly like the in-memory stack.
    */
   redoStack: string[]
+  /**
+   * For every stroke NOT in `visibleIds`, which kind of event last removed it.
+   *
+   * Carried out of the replay rather than recomputed, because deciding "was
+   * this cleared or undone?" needs the order events actually happened in - the
+   * one thing a second pass over the log no longer has.
+   */
+  hiddenBy: Map<string, StrokeHiddenCause>
 }
 
 /** Reads `strokeId` from an undo/redo payload, or null when it is missing. */
@@ -119,10 +127,17 @@ export function replayHistory(
 
   const visibleIds = new Set<string>()
   let redoStack: string[] = []
+  /**
+   * WHY a stroke stopped being visible, for the strokes that are not visible at
+   * the end. Overwritten each time, so it always names the LAST thing that
+   * happened to the stroke - which is what its final status is.
+   */
+  const hiddenBy = new Map<string, StrokeHiddenCause>()
 
   for (const event of buildTimeline(strokes, actions)) {
     if (event.kind === 'draw') {
       visibleIds.add(event.strokeId)
+      hiddenBy.delete(event.strokeId)
       redoStack = []
       continue
     }
@@ -135,7 +150,14 @@ export function replayHistory(
         // than treated as an error: legacy v1 exports legitimately contain
         // undo events whose stroke was deleted by the old destructive model.
         if (id === null || !knownIds.has(id)) break
-        visibleIds.delete(id)
+        // Only a stroke that was actually on the canvas is hidden BY this undo.
+        // One that had already gone - cleared, or undone earlier - keeps the
+        // cause that really removed it, exactly as the `clear` branch below
+        // does. Without this the last event to mention a stroke would overwrite
+        // the history of why it left.
+        if (visibleIds.delete(id)) {
+          hiddenBy.set(id, 'undo')
+        }
         redoStack.push(id)
         break
       }
@@ -143,12 +165,21 @@ export function replayHistory(
         const id = readStrokeId(action)
         if (id === null || !knownIds.has(id)) break
         visibleIds.add(id)
+        // A redone stroke is visible again, so it carries no hidden cause. This
+        // is what makes "undone then redone then visible at the end" report
+        // `visible` rather than `undone`.
+        hiddenBy.delete(id)
         redoStack = redoStack.filter((entry) => entry !== id)
         break
       }
       case 'clear': {
         for (const id of readAffectedStrokeIds(action)) {
-          visibleIds.delete(id)
+          // Only strokes that were actually visible are hidden BY the clear.
+          // An already-undone stroke listed in a clear payload keeps `undo` as
+          // its cause, because that is what removed it from the canvas.
+          if (visibleIds.delete(id)) {
+            hiddenBy.set(id, 'clear')
+          }
         }
         // Clear is a hard boundary: nothing hidden before it can be redone.
         redoStack = []
@@ -160,7 +191,54 @@ export function replayHistory(
     }
   }
 
-  return { visibleIds, redoStack }
+  return { visibleIds, redoStack, hiddenBy }
+}
+
+/**
+ * The final state of one stroke after the whole timeline has been replayed.
+ *
+ * DERIVED, never stored. The canonical session records what happened; this is
+ * the single place that decides what that adds up to, so the graph, the masks
+ * and the canvas can never disagree about it.
+ */
+export type StrokeStatus =
+  /** Painted in the final state. */
+  | 'visible'
+  /** Removed from the canvas by a clear. */
+  | 'cleared'
+  /** Not active in the final state because of an undo. */
+  | 'undone'
+
+/** Which kind of event last removed a stroke from the canvas. */
+export type StrokeHiddenCause = 'clear' | 'undo'
+
+/**
+ * The final status of every stroke, keyed by stroke id.
+ *
+ * Built from the SAME replay walk the canvas uses. Re-deriving undo/redo/clear
+ * semantics separately for the graph is exactly how a visualisation starts
+ * quietly disagreeing with the drawing it claims to describe.
+ */
+export function computeStrokeStatuses(
+  strokes: readonly DrawingStroke[],
+  actions: readonly DrawingAction[],
+): Map<string, StrokeStatus> {
+  const { visibleIds, hiddenBy } = replayHistory(strokes, actions)
+  const statuses = new Map<string, StrokeStatus>()
+
+  for (const stroke of strokes) {
+    if (visibleIds.has(stroke.id)) {
+      statuses.set(stroke.id, 'visible')
+      continue
+    }
+    // A stroke that is not visible and has no recorded cause was never drawn
+    // into the timeline at all - only possible in a malformed history. It is
+    // reported as `undone` rather than invented as visible, because the one
+    // thing that is certain is that it is not on the final canvas.
+    statuses.set(stroke.id, hiddenBy.get(stroke.id) === 'clear' ? 'cleared' : 'undone')
+  }
+
+  return statuses
 }
 
 /**
