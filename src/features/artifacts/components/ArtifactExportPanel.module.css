@@ -1,0 +1,112 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Lossless and lossy exports are visually separated on purpose. */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  background-color: var(--canvas-backdrop, #f8f9fa);
+  border-radius: 8px;
+}
+
+.groupHeading {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.buttonRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.button {
+  padding: 0.45rem 0.9rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+  background-color: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.field {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.fieldLabel {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.select {
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.note {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+/* The lossy warning must read as a warning, not as a footnote. */
+.warning {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: #8a6d00;
+  background-color: #fff9db;
+  border: 1px solid #ffe066;
+  border-radius: 6px;
+}
+
+.successNotice,
+.errorNotice {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  border-radius: 8px;
+}
+
+.successNotice {
+  color: var(--success, #0b7285);
+  background-color: var(--success-surface, #e3fafc);
+  border: 1px solid var(--success-border, #99e9f2);
+}
+
+.errorNotice {
+  color: var(--danger);
+  background-color: var(--danger-surface);
+  border: 1px solid var(--danger-border);
+}
