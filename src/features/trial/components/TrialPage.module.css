@@ -1,0 +1,116 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.canvasArea {
+  position: relative;
+  min-height: 55vh;
+  background-color: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/*
+  Covers the canvas outside the drawing phase. It is a sibling of the canvas
+  rather than a replacement for it: unmounting the canvas between phases would
+  rebuild the Konva stage and its pointer listeners every time.
+*/
+.canvasBlocker {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 0.8rem;
+  background-color: rgb(255 255 255 / 55%);
+  cursor: not-allowed;
+}
+
+.blockerText {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.toolbarWrap {
+  transition: opacity 0.15s ease;
+}
+
+.toolbarWrapDisabled {
+  opacity: 0.45;
+}
+
+.errorNotice,
+.successNotice {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  border-radius: 8px;
+}
+
+.errorNotice {
+  color: var(--danger);
+  background-color: var(--danger-surface);
+  border: 1px solid var(--danger-border);
+}
+
+.successNotice {
+  color: var(--success);
+  background-color: var(--success-surface);
+  border: 1px solid var(--success-border);
+}
+
+/* Offer to reopen a completed result found in local storage. */
+.restorePrompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--success);
+  background-color: var(--success-surface);
+  border: 1px solid var(--success-border);
+  border-radius: 8px;
+}
+
+.restorePrompt p {
+  margin: 0;
+}
+
+.restoreActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.restoreActions button,
+.retryButton {
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background-color: transparent;
+  border: 1px solid currentcolor;
+  border-radius: 6px;
+}
+
+/* Sits inline after the save-status text. */
+.retryButton {
+  margin-inline-start: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .canvasArea {
+    min-height: 45vh;
+  }
+}

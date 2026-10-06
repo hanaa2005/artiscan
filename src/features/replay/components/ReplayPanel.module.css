@@ -1,0 +1,148 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.note {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.errorNotice {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--danger);
+  background-color: var(--danger-surface);
+  border: 1px solid var(--danger-border);
+  border-radius: 8px;
+}
+
+/* The measured box the recording is letterboxed into. */
+.stageArea {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  max-height: 55vh;
+  padding: 0.5rem;
+  background-color: var(--canvas-backdrop, #f1f3f5);
+  border-radius: 8px;
+}
+
+.canvasFrame {
+  overflow: hidden;
+  background-color: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.transport {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.button,
+.primaryButton,
+.rateButton,
+.rateButtonActive {
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.button,
+.rateButton {
+  color: var(--text);
+  background-color: transparent;
+  border: 1px solid var(--border);
+}
+
+.primaryButton {
+  color: #ffffff;
+  background-color: var(--accent, #1f2933);
+  border: 1px solid transparent;
+}
+
+.rateButtonActive {
+  color: #ffffff;
+  background-color: var(--accent, #1f2933);
+  border: 1px solid transparent;
+}
+
+/* The slider takes the remaining width so scrubbing is precise. */
+.seekField {
+  display: flex;
+  flex: 1 1 200px;
+  align-items: center;
+  min-width: 160px;
+}
+
+.seekSlider {
+  width: 100%;
+}
+
+.timeReadout {
+  margin: 0;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.rates {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.statusLine {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.activeBadge {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--success, #0b7285);
+  background-color: var(--success-surface, #e3fafc);
+  border: 1px solid var(--success-border, #99e9f2);
+  border-radius: 999px;
+}
+
+/* Visually hidden but available to assistive technology. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

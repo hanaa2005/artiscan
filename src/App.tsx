@@ -20,9 +20,15 @@ import {
   downloadStagePng,
 } from './features/drawing/services/drawingExporter'
 import { deserializeSession } from './features/drawing/services/drawingSerializer'
+import { readSessionFile } from './features/drawing/services/sessionFileReader'
 import { getLatestSession } from './features/drawing/services/drawingSessionRepository'
 import type { DrawingSession } from './features/drawing/types/drawing.types'
 import { computeVisibleStrokes } from './features/drawing/utils/strokeVisibility'
+import {
+  EMPTY_CAPTURE_DIAGNOSTICS,
+  type CaptureDiagnostics,
+} from './features/drawing/utils/duplicateSamples'
+import { TrialPage, type TrialExitGuard } from './features/trial/components/TrialPage'
 import styles from './App.module.css'
 
 interface Notice {
@@ -30,7 +36,96 @@ interface Notice {
   message: string
 }
 
+/** Which of the two workspaces is showing. */
+type AppMode = 'lab' | 'trial'
+
+const ABANDON_TRIAL_MESSAGE =
+  'آزمون در حال اجراست. با خروج از این بخش، نقاشی فعلی ثبت نخواهد شد. ادامه می‌دهید؟'
+
+/**
+ * The application shell.
+ *
+ * Week 2 added a second workspace rather than changing the first: the free
+ * drawing lab below is exactly the accepted week-1 flow, and the trial flow is
+ * a sibling that reuses the same canvas, toolbar and recorder.
+ */
 export default function App(): React.JSX.Element {
+  const [mode, setMode] = useState<AppMode>('trial')
+  const trialExitGuardRef = useRef<TrialExitGuard | null>(null)
+
+  /** Mirrors `mode` so the switch can read it without a state updater. */
+  const modeRef = useRef<AppMode>(mode)
+  modeRef.current = mode
+
+  /**
+   * Switches workspace, asking first when that would discard a live trial.
+   *
+   * Declining changes nothing at all - the trial keeps its task, id, countdown
+   * or elapsed clock and every stroke, because the component is never
+   * unmounted. Accepting cancels the trial EXPLICITLY rather than letting it
+   * vanish, so its timers are cleared and the state machine records that it was
+   * abandoned instead of silently ending mid-flight.
+   *
+   * A trial still on the instructions screen is deliberately not protected:
+   * nothing has been recorded yet, so there is nothing to lose and a
+   * confirmation would only be noise.
+   */
+  const requestMode = useCallback((next: AppMode): void => {
+    // The confirmation and the cancellation are side effects, so they stay
+    // OUTSIDE the state updater: React StrictMode invokes updaters twice in
+    // development, which would show the user two dialogs for one click.
+    const current = modeRef.current
+    if (current === next) return
+
+    const guard = trialExitGuardRef.current
+    if (current === 'trial' && guard !== null && guard.isActive()) {
+      if (!window.confirm(ABANDON_TRIAL_MESSAGE)) return
+      guard.abandon()
+    }
+    setMode(next)
+  }, [])
+
+  return (
+    <div className={styles.app}>
+      <header className={styles.header}>
+        <h1 className={styles.title}>ArtiScan - آزمایشگاه ثبت فرایند نقاشی</h1>
+        <p className={styles.subtitle}>
+          ثبت رویدادمحور فرایند رسم و استخراج ویژگی‌های عینی. داده‌های این نسخه آزمایشی
+          هستند و سامانه هیچ تحلیل یا کاربرد تشخیصی روان‌شناختی ندارد.
+        </p>
+        <div className={styles.modeSwitch} role="tablist" aria-label="حالت کاری">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'trial'}
+            className={mode === 'trial' ? styles.modeButtonActive : styles.modeButton}
+            onClick={() => {
+              requestMode('trial')
+            }}
+          >
+            اجرای آزمون
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'lab'}
+            className={mode === 'lab' ? styles.modeButtonActive : styles.modeButton}
+            onClick={() => {
+              requestMode('lab')
+            }}
+          >
+            رسم آزاد
+          </button>
+        </div>
+      </header>
+
+      {mode === 'trial' ? <TrialPage exitGuardRef={trialExitGuardRef} /> : <FreeDrawingLab />}
+    </div>
+  )
+}
+
+/** The accepted week-1 workspace, unchanged. */
+function FreeDrawingLab(): React.JSX.Element {
   const session = useDrawingSession()
   const { containerRef, size } = useCanvasSize()
   const stageRef = useRef<Konva.Stage | null>(null)
@@ -38,8 +133,24 @@ export default function App(): React.JSX.Element {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [isDebugOpen, setIsDebugOpen] = useState(true)
   const [restorable, setRestorable] = useState<DrawingSession | null>(null)
+  /**
+   * Capture counters for the debug panel. Reported by the canvas when a stroke
+   * finishes, so this state never changes during pointer movement.
+   */
+  const [captureDiagnostics, setCaptureDiagnostics] = useState<CaptureDiagnostics>(
+    EMPTY_CAPTURE_DIAGNOSTICS,
+  )
 
-  const { strokes, actions, buildSession, loadSession, startNewSession } = session
+  const { strokes, actions, buildSession, loadSession, startNewSession, latchLogicalCanvas } =
+    session
+
+  /**
+   * Fixes the logical canvas at the first real layout, before anything is
+   * drawn. Every later resize is display-only - see latchLogicalCanvas.
+   */
+  useEffect(() => {
+    latchLogicalCanvas(size)
+  }, [latchLogicalCanvas, size])
 
   /** The exportable snapshot of everything recorded so far. */
   const snapshot = useMemo(() => buildSession(size), [buildSession, size])
@@ -130,20 +241,20 @@ export default function App(): React.JSX.Element {
    */
   const handleImportJson = useCallback(
     (file: File): void => {
-      const reader = new FileReader()
-
-      reader.onerror = () => {
-        setNotice({ kind: 'error', message: 'خواندن فایل ناموفق بود.' })
-      }
-
-      reader.onload = () => {
-        const text = reader.result
-        if (typeof text !== 'string') {
-          setNotice({ kind: 'error', message: 'محتوای فایل قابل خواندن نبود.' })
+      /*
+        Compressed and plain files take the same path from here on. The reader
+        sniffs the bytes and hands back text; gzip is a transport encoding, so
+        it must not change what happens to the session afterwards - including
+        which messages the user sees.
+      */
+      void (async () => {
+        const read = await readSessionFile(file)
+        if (!read.ok) {
+          setNotice({ kind: 'error', message: read.error })
           return
         }
 
-        const result = deserializeSession(text)
+        const result = deserializeSession(read.value.text)
         if (!result.ok) {
           setNotice({ kind: 'error', message: result.error })
           return
@@ -160,6 +271,8 @@ export default function App(): React.JSX.Element {
           recorded === visible
             ? `جلسه با ${recorded} خط وارد و روی بوم بازسازی شد.`
             : `جلسه با ${recorded} خط ثبت‌شده وارد شد؛ ${visible} خط روی بوم دیده می‌شود (بقیه با Clear یا Undo پنهان شده‌اند).`
+        const encodingNote =
+          read.value.encoding === 'gzip' ? ' (از فایل فشرده، بدون هیچ کاستی)' : ''
 
         // An incomplete legacy history is a data-quality warning, not a success:
         // the user must not walk away thinking the file holds a full recording.
@@ -169,10 +282,8 @@ export default function App(): React.JSX.Element {
           return
         }
 
-        setNotice({ kind: 'success', message: countMessage })
-      }
-
-      reader.readAsText(file)
+        setNotice({ kind: 'success', message: `${countMessage}${encodingNote}` })
+      })()
     },
     [loadSession],
   )
@@ -199,15 +310,7 @@ export default function App(): React.JSX.Element {
   }, [])
 
   return (
-    <div className={styles.app}>
-      <header className={styles.header}>
-        <h1 className={styles.title}>ArtiScan - آزمایشگاه ثبت فرایند نقاشی</h1>
-        <p className={styles.subtitle}>
-          نمونه اولیه هفته اول: ثبت رویدادمحور فرایند رسم. داده‌های این نسخه آزمایشی هستند و
-          سامانه هیچ تحلیل یا کاربرد تشخیصی روان‌شناختی ندارد.
-        </p>
-      </header>
-
+    <div className={styles.labPage}>
       {restorable !== null ? (
         <SessionRestorePrompt
           session={restorable}
@@ -224,7 +327,13 @@ export default function App(): React.JSX.Element {
         canRedo={session.canRedo}
         onToolChange={session.setTool}
         onColorChange={session.setColor}
+        onColorInteractionBegin={session.beginColorInteraction}
+        onColorPreview={session.previewColor}
+        onColorInteractionCommit={session.commitColorInteraction}
         onWidthChange={session.setWidth}
+        onWidthInteractionBegin={session.beginWidthInteraction}
+        onWidthPreview={session.previewWidth}
+        onWidthInteractionCommit={session.commitWidthInteraction}
         onUndo={session.undo}
         onRedo={session.redo}
         onClear={handleClear}
@@ -250,11 +359,13 @@ export default function App(): React.JSX.Element {
           strokes={session.visibleStrokes}
           session={session}
           stageRef={stageRef}
+          onCaptureDiagnostics={setCaptureDiagnostics}
         />
       </main>
 
       <DrawingDebugPanel
         session={snapshot}
+        captureDiagnostics={captureDiagnostics}
         visibleStrokeCount={session.visibleStrokes.length}
         tool={session.tool}
         lastPointerType={session.lastPointerType}

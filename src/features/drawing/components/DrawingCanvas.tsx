@@ -17,7 +17,14 @@ import type Konva from 'konva'
 import type { DrawingStroke } from '../types/drawing.types'
 import type { RawPointerSample, UseDrawingSessionResult } from '../hooks/useDrawingSession'
 import { toKonvaPoints, type Size } from '../utils/coordinates'
+// Capture and replay share one definition of how a stroke looks.
+import { StrokeLine } from './strokeRendering'
+import { LINE_STYLE } from '../utils/strokeStyle'
 import { getPointerSamples, toRawSample } from '../utils/pointerInput'
+import {
+  createCaptureSampleFilter,
+  type CaptureDiagnostics,
+} from '../utils/duplicateSamples'
 import styles from './DrawingCanvas.module.css'
 
 interface DrawingCanvasProps {
@@ -25,54 +32,40 @@ interface DrawingCanvasProps {
   strokes: readonly DrawingStroke[]
   session: UseDrawingSessionResult
   stageRef: React.RefObject<Konva.Stage | null>
+  /**
+   * Debug-only capture counters, reported when a stroke finishes.
+   *
+   * Optional and never part of the session: how many re-delivered samples the
+   * browser produced is a property of this browser on this day, not of the
+   * drawing. See utils/duplicateSamples.ts.
+   */
+  onCaptureDiagnostics?: (diagnostics: CaptureDiagnostics) => void
 }
-
-/** Shared Konva line settings that make strokes look like ink rather than wire. */
-const LINE_STYLE = {
-  lineCap: 'round',
-  lineJoin: 'round',
-  // Konva's own smoothing; purely visual and never written back to the data.
-  tension: 0,
-  perfectDrawEnabled: false,
-} as const
-
-/**
- * One committed stroke.
- *
- * The eraser is drawn with the `destination-out` composite operation: instead
- * of painting a colour it removes whatever is already on the layer. That is why
- * the eraser must live in the SAME layer as the ink - a separate layer would
- * only erase its own (empty) canvas.
- */
-const StrokeLine = memo(function StrokeLine({
-  stroke,
-  size,
-}: {
-  stroke: DrawingStroke
-  size: Size
-}) {
-  const isEraser = stroke.tool === 'eraser'
-  return (
-    <Line
-      points={toKonvaPoints(stroke.points, size)}
-      stroke={isEraser ? '#000000' : stroke.color}
-      strokeWidth={stroke.width}
-      globalCompositeOperation={isEraser ? 'destination-out' : 'source-over'}
-      {...LINE_STYLE}
-    />
-  )
-})
 
 function DrawingCanvasComponent({
   size,
   strokes,
   session,
   stageRef,
+  onCaptureDiagnostics,
 }: DrawingCanvasProps): React.JSX.Element {
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const liveLineRef = useRef<Konva.Line | null>(null)
   const layerRef = useRef<Konva.Layer | null>(null)
   const activePointerIdRef = useRef<number | null>(null)
+
+  /**
+   * Drops raw samples the browser delivered twice, before they become points.
+   *
+   * Lives here rather than in the recorder because it needs the NATIVE event -
+   * its unrounded coordinates and its own timeStamp. By the time the recorder
+   * sees a sample those have already been rounded, and the evidence needed to
+   * tell a re-delivery from a stationary pointer is gone.
+   */
+  const sampleFilterRef = useRef(createCaptureSampleFilter())
+
+  const onCaptureDiagnosticsRef = useRef(onCaptureDiagnostics)
+  onCaptureDiagnosticsRef.current = onCaptureDiagnostics
 
   /** Latest size, readable from the native listeners without re-subscribing. */
   const sizeRef = useRef<Size>(size)
@@ -124,6 +117,11 @@ function DrawingCanvasComponent({
         // Some browsers refuse capture for synthetic pointers; drawing still works.
       }
 
+      // A fresh stroke never inherits the previous stroke's last sample, so a
+      // new press at exactly the same spot is always recorded.
+      sampleFilterRef.current.reset()
+      sampleFilterRef.current.accept([event])
+
       const sample: RawPointerSample = toRawSample(event, readRect(), sizeRef.current)
       sessionRef.current.beginStroke(sample)
       redrawLiveStroke()
@@ -136,10 +134,13 @@ function DrawingCanvasComponent({
       const rect = readRect()
       const currentSize = sizeRef.current
       // One pointermove can carry several real samples on a high-frequency
-      // digitizer; getPointerSamples() unpacks them.
-      const samples = getPointerSamples(event).map((raw) =>
-        toRawSample(raw, rect, currentSize),
-      )
+      // digitizer; getPointerSamples() unpacks them. The filter then removes
+      // only the ones the browser had already delivered - a stationary pointer
+      // survives, because a pause is data.
+      const rawEvents = sampleFilterRef.current.accept(getPointerSamples(event))
+      if (rawEvents.length === 0) return
+
+      const samples = rawEvents.map((raw) => toRawSample(raw, rect, currentSize))
       sessionRef.current.extendStroke(samples)
       redrawLiveStroke()
     }
@@ -161,6 +162,10 @@ function DrawingCanvasComponent({
       } else {
         sessionRef.current.endStroke()
       }
+
+      sampleFilterRef.current.reset()
+      onCaptureDiagnosticsRef.current?.(sampleFilterRef.current.getDiagnostics())
+
       // Clear the live line: the committed stroke is now rendered by React.
       redrawLiveStroke()
     }
@@ -200,7 +205,14 @@ function DrawingCanvasComponent({
       <Stage ref={stageRef} width={size.width} height={size.height}>
         <Layer ref={layerRef} listening={false}>
           {strokes.map((stroke) => (
-            <StrokeLine key={stroke.id} stroke={stroke} size={size} />
+            <StrokeLine
+              key={stroke.id}
+              points={stroke.points}
+              tool={stroke.tool}
+              color={stroke.color}
+              width={stroke.width}
+              size={size}
+            />
           ))}
           {/* The live stroke. Always last so it paints above committed ink. */}
           <Line ref={liveLineRef} points={[]} {...LINE_STYLE} />

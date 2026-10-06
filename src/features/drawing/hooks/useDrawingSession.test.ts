@@ -559,3 +559,267 @@ describe('useDrawingSession - session lifecycle', () => {
     expect(newStroke?.startedAtMs).toBeGreaterThanOrEqual(lastTime)
   })
 })
+
+/**
+ * COLOUR: preview versus committed action.
+ *
+ * A native `<input type="color">` streams `change` events while the user drags
+ * around inside the picker. Recording each one appended dozens of
+ * `color_change` actions for a single deliberate choice, burying the one
+ * decision the participant actually made under the noise of them looking for
+ * it.
+ *
+ * Preview paints; commit records. The tests below pin down every way a real
+ * browser ends an interaction, because the whole point is that they all
+ * converge on exactly one action.
+ */
+describe('useDrawingSession - colour preview versus committed action', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  /** The colour actions recorded so far, in order. */
+  function colorActions(result: { current: ReturnType<typeof useDrawingSession> }) {
+    return result.current.actions.filter((action) => action.type === 'color_change')
+  }
+
+  it('records exactly one action for a single direct selection', () => {
+    const { result } = renderHook(() => useDrawingSession())
+    const start = result.current.color
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+      result.current.commitColorInteraction()
+    })
+
+    const actions = colorActions(result)
+    expect(actions).toHaveLength(1)
+    expect(actions[0]?.payload).toEqual({ from: start, to: '#ff0000' })
+    expect(result.current.color).toBe('#ff0000')
+  })
+
+  it('records two actions for two separate selections', () => {
+    const { result } = renderHook(() => useDrawingSession())
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+      result.current.commitColorInteraction()
+    })
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#000000')
+      result.current.commitColorInteraction()
+    })
+
+    const actions = colorActions(result)
+    expect(actions).toHaveLength(2)
+    expect(actions[1]?.payload).toEqual({ from: '#ff0000', to: '#000000' })
+  })
+
+  it('collapses many preview values in one interaction into a single action', () => {
+    const { result } = renderHook(() => useDrawingSession())
+    const start = result.current.color
+
+    act(() => {
+      result.current.beginColorInteraction()
+      for (const shade of ['#111111', '#222222', '#333333', '#0000ff', '#00ff00']) {
+        result.current.previewColor(shade)
+      }
+      result.current.commitColorInteraction()
+    })
+
+    const actions = colorActions(result)
+    expect(actions).toHaveLength(1)
+    // `from` is where the interaction STARTED, not the last colour passed through.
+    expect(actions[0]?.payload).toEqual({ from: start, to: '#00ff00' })
+  })
+
+  it('records nothing when the interaction ends on the colour it started with', () => {
+    const { result } = renderHook(() => useDrawingSession())
+    const start = result.current.color
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#abcdef')
+      result.current.previewColor(start)
+      result.current.commitColorInteraction()
+    })
+
+    expect(colorActions(result)).toHaveLength(0)
+    expect(result.current.color).toBe(start)
+  })
+
+  it('records nothing when the picker is opened and closed without a change', () => {
+    const { result } = renderHook(() => useDrawingSession())
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.commitColorInteraction()
+    })
+
+    expect(colorActions(result)).toHaveLength(0)
+  })
+
+  it('is idempotent: change + pointerup + blur produce ONE action, not three', () => {
+    const { result } = renderHook(() => useDrawingSession())
+    const start = result.current.color
+
+    act(() => {
+      // change
+      result.current.beginColorInteraction()
+      result.current.previewColor('#123456')
+      // pointerup
+      result.current.commitColorInteraction()
+      // blur, on an interaction that is already closed
+      result.current.commitColorInteraction()
+    })
+
+    const actions = colorActions(result)
+    expect(actions).toHaveLength(1)
+    expect(actions[0]?.payload).toEqual({ from: start, to: '#123456' })
+  })
+
+  it('does not let a repeated begin move the starting colour forward', () => {
+    const { result } = renderHook(() => useDrawingSession())
+    const start = result.current.color
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#101010')
+      // A pointerdown arriving mid-interaction must not reset `from`.
+      result.current.beginColorInteraction()
+      result.current.previewColor('#202020')
+      result.current.commitColorInteraction()
+    })
+
+    expect(colorActions(result)[0]?.payload).toEqual({ from: start, to: '#202020' })
+  })
+
+  it('records exactly three actions for three interactions', () => {
+    const { result } = renderHook(() => useDrawingSession())
+
+    for (const shade of ['#ff0000', '#00ff00', '#0000ff']) {
+      act(() => {
+        result.current.beginColorInteraction()
+        result.current.previewColor(shade)
+        result.current.commitColorInteraction()
+      })
+    }
+
+    expect(colorActions(result)).toHaveLength(3)
+  })
+
+  it('leaves a stroke drawn BEFORE the change in its original colour', () => {
+    const { result } = renderHook(() => useDrawingSession())
+    const start = result.current.color
+
+    drawStroke(result, 10)
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+      result.current.commitColorInteraction()
+    })
+
+    expect(result.current.strokes[0]?.color).toBe(start)
+  })
+
+  it('paints a stroke drawn AFTER the commit in the final colour', () => {
+    const { result } = renderHook(() => useDrawingSession())
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+      result.current.commitColorInteraction()
+    })
+    drawStroke(result, 10)
+
+    expect(result.current.strokes[0]?.color).toBe('#ff0000')
+  })
+
+  it('commits an open interaction when drawing starts, so the log matches the ink', () => {
+    // Without this, a user who picks a colour and draws without ever blurring
+    // the picker gets a stroke in the new colour and no action explaining it.
+    const { result } = renderHook(() => useDrawingSession())
+    const start = result.current.color
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+    })
+    drawStroke(result, 10)
+
+    const actions = colorActions(result)
+    expect(actions).toHaveLength(1)
+    expect(actions[0]?.payload).toEqual({ from: start, to: '#ff0000' })
+    expect(result.current.strokes[0]?.color).toBe('#ff0000')
+    // The change is ordered BEFORE the stroke that used it.
+    const firstPoint = result.current.strokes[0]?.points[0]
+    expect(actions[0]?.sequence).toBeLessThan(firstPoint?.sequence ?? 0)
+  })
+
+  it('still supports an atomic setColor, and settles any open interaction first', () => {
+    const { result } = renderHook(() => useDrawingSession())
+    const start = result.current.color
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+      result.current.setColor('#0000ff')
+    })
+
+    const actions = colorActions(result)
+    // One for the settled interaction, one for the direct selection.
+    expect(actions).toHaveLength(2)
+    expect(actions[0]?.payload).toEqual({ from: start, to: '#ff0000' })
+    expect(actions[1]?.payload).toEqual({ from: '#ff0000', to: '#0000ff' })
+    expect(result.current.color).toBe('#0000ff')
+  })
+
+  it('exports a session whose colour actions survive validation', () => {
+    const { result } = renderHook(() => useDrawingSession())
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+      result.current.commitColorInteraction()
+    })
+    drawStroke(result, 10)
+
+    const session = result.current.buildSession(CANVAS)
+    expect(validateSession(session).ok).toBe(true)
+    expect(session.actions.filter((action) => action.type === 'color_change')).toHaveLength(1)
+    expect(session.strokes[0]?.color).toBe('#ff0000')
+  })
+
+  it('drops a pending interaction when a new session starts', () => {
+    const { result } = renderHook(() => useDrawingSession())
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+    })
+    act(() => {
+      result.current.startNewSession()
+    })
+    act(() => {
+      result.current.commitColorInteraction()
+    })
+
+    expect(colorActions(result)).toHaveLength(0)
+  })
+
+  it('leaves the recorded pointerType untouched by any of this', () => {
+    const { result } = renderHook(() => useDrawingSession())
+
+    act(() => {
+      result.current.beginColorInteraction()
+      result.current.previewColor('#ff0000')
+      result.current.commitColorInteraction()
+    })
+    drawStroke(result, 10)
+
+    expect(result.current.strokes[0]?.points[0]?.pointerType).toBe('mouse')
+  })
+})

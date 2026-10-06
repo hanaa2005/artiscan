@@ -9,12 +9,20 @@
 import { memo } from 'react'
 import type { DrawingSession, DrawingTool, PointerInputType } from '../types/drawing.types'
 import type { Size } from '../utils/coordinates'
+import type { CaptureDiagnostics } from '../utils/duplicateSamples'
 import { computeStats } from '../utils/drawingStats'
 import { formatDurationFa } from '../utils/timing'
 import styles from './DrawingDebugPanel.module.css'
 
 interface DrawingDebugPanelProps {
   session: DrawingSession
+  /**
+   * Raw-capture counters for the current page lifetime.
+   *
+   * Deliberately NOT part of the session: how many samples this browser
+   * re-delivered is a property of the runtime, not of the drawing.
+   */
+  captureDiagnostics: CaptureDiagnostics
   /** How many strokes are currently painted, after replaying undo/redo/clear. */
   visibleStrokeCount: number
   tool: DrawingTool
@@ -48,6 +56,7 @@ function Row({ label, value }: { label: string; value: string }): React.JSX.Elem
 
 function DrawingDebugPanelComponent({
   session,
+  captureDiagnostics,
   visibleStrokeCount,
   tool,
   lastPointerType,
@@ -101,6 +110,23 @@ function DrawingDebugPanelComponent({
             value={stats.hasPressureSamples ? 'ثبت شده' : 'ثبت نشده'}
           />
           <Row label="تعداد رویدادها" value={String(session.actions.length)} />
+          {/*
+            Capture diagnostics. "Dropped" counts only provable re-deliveries of
+            the same raw sample; "stationary" counts repeats that were KEPT,
+            because a pointer that stops moving is evidence, not noise.
+          */}
+          <Row
+            label="نمونه‌های خام دریافتی"
+            value={String(captureDiagnostics.receivedSampleCount)}
+          />
+          <Row
+            label="تکراری قطعی (حذف‌شده)"
+            value={String(captureDiagnostics.droppedDuplicateCount)}
+          />
+          <Row
+            label="توقف اشاره‌گر (حفظ‌شده)"
+            value={String(captureDiagnostics.suspectedDuplicateCount)}
+          />
           <Row label="نسخه Schema" value={String(session.schemaVersion)} />
           <Row label="ذخیره خودکار" value={autoSaveStatus} />
 

@@ -20,6 +20,7 @@ import {
 } from '../utils/strokeVisibility'
 import {
   CURRENT_SCHEMA_VERSION,
+  type CanvasDescriptor,
   type DrawingAction,
   type DrawingActionType,
   type DrawingSession,
@@ -105,8 +106,56 @@ export interface UseDrawingSessionResult {
   getLiveStroke: () => InProgressStroke | null
 
   setTool: (tool: DrawingTool) => void
+  /**
+   * Changes the colour and records it as one action. For direct, atomic
+   * selection; a picker the user drags through should use the three calls below.
+   */
   setColor: (color: string) => void
   setWidth: (width: number) => void
+
+  /**
+   * COLOUR INTERACTION: preview is not an action.
+   *
+   * A native `<input type="color">` fires `change` continuously while the user
+   * drags around inside the picker, so one deliberate colour choice used to
+   * append dozens of `color_change` events - burying the single decision the
+   * participant actually made under the noise of them looking for it.
+   *
+   * The fix separates the two things that were conflated:
+   *
+   *   previewColor()            paints with the colour, records nothing
+   *   commitColorInteraction()  records ONE action, from the colour at the
+   *                             start of the interaction to the final one
+   *
+   * Commit is idempotent, so `change` + `pointerup` + `blur` for a single
+   * interaction still yields exactly one action, and an interaction that ends
+   * on the colour it started with yields none.
+   */
+  beginColorInteraction: () => void
+  previewColor: (color: string) => void
+  commitColorInteraction: () => void
+
+  /**
+   * WIDTH INTERACTION: identical contract to colour, for the same reason.
+   *
+   * A `<input type="range">` fires `change` on every step the thumb crosses, so
+   * one deliberate drag from 29 down to 8 appended a `width_change` for each
+   * intermediate value - a real recording contained
+   * `29 -> 14 -> 13 -> 12 -> 11 -> 10 -> 9 -> 12 -> 9 -> 11 -> 8 -> 10 -> 7 -> 9 -> 8`,
+   * fifteen actions describing one decision. The overshoot back and forth is
+   * the participant's hand on a slider, not fifteen choices about line width.
+   *
+   *   previewWidth()            paints with the width, records nothing
+   *   commitWidthInteraction()  records ONE action, from the width at the start
+   *                             of the interaction to the final one
+   *
+   * Commit is idempotent, so `change` + `pointerup` + `blur` for a single drag
+   * still yields exactly one action, and a drag that ends on the width it
+   * started with yields none.
+   */
+  beginWidthInteraction: () => void
+  previewWidth: (width: number) => void
+  commitWidthInteraction: () => void
 
   undo: () => void
   redo: () => void
@@ -114,12 +163,58 @@ export interface UseDrawingSessionResult {
   startNewSession: () => void
   loadSession: (session: DrawingSession) => void
 
-  /** Builds the exportable snapshot for the given canvas size. */
-  buildSession: (canvasSize: Size) => DrawingSession
+  /**
+   * Fixes the LOGICAL CANVAS for this session, once.
+   *
+   * THE PROBLEM THIS SOLVES (confirmed in week 1A)
+   *
+   * buildSession() used to stamp whatever size the canvas happened to be at
+   * EXPORT time. Raw points, however, were captured against the size the canvas
+   * had at CAPTURE time. Resize the window between the two and the file pairs
+   * one with the other: a point recorded well inside a 900 px canvas is filed
+   * against a 718 px descriptor and reads as "outside the canvas" although the
+   * pointer never left the surface.
+   *
+   * So the descriptor is latched the first time a real layout size is known and
+   * then never moves for the lifetime of the session. A later resize changes
+   * only what is displayed. Calling this repeatedly is safe - every call after
+   * the first is ignored.
+   *
+   * A 1x1 size is the pre-layout placeholder from useCanvasSize and is never
+   * latched; latching it would freeze the session at a meaningless size.
+   */
+  latchLogicalCanvas: (size: Size) => void
+  /** The fixed logical canvas, or null before the first real layout. */
+  getLogicalCanvas: () => CanvasDescriptor | null
+
+  /**
+   * Builds the exportable snapshot.
+   *
+   * `fallbackSize` is used ONLY when no logical canvas has been latched yet -
+   * an export taken before the first layout. Once latched, the logical canvas
+   * wins and this argument is ignored, which is what makes the descriptor
+   * stable across a resize.
+   */
+  buildSession: (fallbackSize: Size) => DrawingSession
 }
 
 function createSessionId(): string {
   return crypto.randomUUID()
+}
+
+/**
+ * The size below which a measurement is treated as "layout has not happened
+ * yet" rather than as a real canvas. useCanvasSize reports 1x1 until its
+ * ResizeObserver first fires.
+ */
+const MIN_LOGICAL_CANVAS_PX = 2
+
+function toCanvasDescriptor(size: Size): CanvasDescriptor {
+  return {
+    width: Math.max(1, Math.round(size.width)),
+    height: Math.max(1, Math.round(size.height)),
+    devicePixelRatio: window.devicePixelRatio,
+  }
 }
 
 function createMeta(): SessionMeta {
@@ -158,6 +253,27 @@ export function useDrawingSession(): UseDrawingSessionResult {
    */
   const sequenceRef = useRef<number>(0)
   const currentStrokeRef = useRef<InProgressStroke | null>(null)
+
+  /**
+   * The canvas geometry this session's raw coordinates belong to.
+   *
+   * Latched once and then immutable for the session, so the descriptor in the
+   * exported file always describes the surface the points were actually
+   * captured on. See latchLogicalCanvas in the result interface.
+   */
+  const logicalCanvasRef = useRef<CanvasDescriptor | null>(null)
+
+  const latchLogicalCanvas = useCallback((size: Size): void => {
+    if (logicalCanvasRef.current !== null) return
+    // Ignore the pre-layout placeholder: freezing the session at 1x1 would be
+    // far worse than waiting one frame for a real measurement.
+    if (size.width < MIN_LOGICAL_CANVAS_PX || size.height < MIN_LOGICAL_CANVAS_PX) return
+    logicalCanvasRef.current = toCanvasDescriptor(size)
+  }, [])
+
+  const getLogicalCanvas = useCallback((): CanvasDescriptor | null => {
+    return logicalCanvasRef.current
+  }, [])
 
   /**
    * Mirrors of the state, kept in sync on every render.
@@ -208,6 +324,116 @@ export function useDrawingSession(): UseDrawingSessionResult {
     [elapsedMs, nextSequence],
   )
 
+  /**
+   * The colour the current picker interaction started from, or null when no
+   * interaction is open. Its presence is what makes commit idempotent.
+   */
+  const colorInteractionFromRef = useRef<string | null>(null)
+  /**
+   * The authoritative current colour.
+   *
+   * `settingsRef` mirrors state and is therefore a render BEHIND whenever
+   * several colour calls land in one React batch - which is exactly what a
+   * picker drag produces. Every colour path writes here first and reads here
+   * first, so the value can never be stale.
+   */
+  const currentColorRef = useRef<string>(color)
+  // Safe to resync on every render: by the time a render runs, the state has
+  // caught up with whatever the ref was set to during the batch.
+  currentColorRef.current = color
+
+  /** The authoritative current width, for exactly the same reason as colour. */
+  const currentWidthRef = useRef<number>(width)
+  currentWidthRef.current = width
+
+  /**
+   * The width the current slider interaction started from, or null when no
+   * interaction is open. Its presence is what makes commit idempotent.
+   */
+  const widthInteractionFromRef = useRef<number | null>(null)
+
+  /**
+   * Writes the preferences that should survive a reload.
+   *
+   * Reads the authoritative refs rather than `settingsRef`, which mirrors state
+   * and is a render behind during a batched interaction. Saving from the mirror
+   * would persist whichever value the pointer happened to pass through last.
+   */
+  const persistPreferences = useCallback((): void => {
+    savePreferences({
+      tool: settingsRef.current.tool,
+      color: currentColorRef.current,
+      width: currentWidthRef.current,
+    })
+  }, [])
+
+  const beginColorInteraction = useCallback((): void => {
+    // Idempotent: a second begin inside one interaction must not move the
+    // starting colour forward, or the committed `from` would be a colour the
+    // user only passed through.
+    if (colorInteractionFromRef.current !== null) return
+    colorInteractionFromRef.current = currentColorRef.current
+  }, [])
+
+  const previewColor = useCallback((next: string): void => {
+    // Preferences are deliberately NOT saved here: a colour merely passed
+    // through is not the user's choice, and persisting it would make the app
+    // reopen with whatever hue the pointer happened to cross last.
+    currentColorRef.current = next
+    setColorState(next)
+  }, [])
+
+  /** Closes an open interaction, recording at most one action. */
+  const commitColorInteraction = useCallback((): void => {
+    const from = colorInteractionFromRef.current
+    // No open interaction: a stray blur or pointerup after an already-committed
+    // change records nothing.
+    if (from === null) return
+
+    const to = currentColorRef.current
+    colorInteractionFromRef.current = null
+
+    // Ending where it began is not a change. Closing or cancelling the picker
+    // therefore leaves no trace in the log.
+    if (from === to) return
+
+    persistPreferences()
+    logAction('color_change', { from, to })
+  }, [logAction, persistPreferences])
+
+  const beginWidthInteraction = useCallback((): void => {
+    // Idempotent: a second begin inside one drag must not move the starting
+    // width forward, or the committed `from` would be an intermediate value.
+    if (widthInteractionFromRef.current !== null) return
+    widthInteractionFromRef.current = currentWidthRef.current
+  }, [])
+
+  const previewWidth = useCallback((next: number): void => {
+    // Preferences are deliberately NOT saved here: a width merely dragged
+    // through is not the user's choice, and persisting it would make the app
+    // reopen with whatever value the thumb happened to cross last.
+    currentWidthRef.current = next
+    setWidthState(next)
+  }, [])
+
+  /** Closes an open interaction, recording at most one action. */
+  const commitWidthInteraction = useCallback((): void => {
+    const from = widthInteractionFromRef.current
+    // No open interaction: a stray blur or pointerup after an already-committed
+    // change records nothing.
+    if (from === null) return
+
+    const to = currentWidthRef.current
+    widthInteractionFromRef.current = null
+
+    // Ending where it began is not a change - a drag that wanders away and
+    // comes back leaves no trace in the log.
+    if (from === to) return
+
+    persistPreferences()
+    logAction('width_change', { from, to })
+  }, [logAction, persistPreferences])
+
   const buildPoint = useCallback(
     (sample: RawPointerSample): PointSample => {
       return {
@@ -228,20 +454,40 @@ export function useDrawingSession(): UseDrawingSessionResult {
 
   const beginStroke = useCallback(
     (sample: RawPointerSample): void => {
+      /*
+        Settle any open colour interaction BEFORE the stroke starts.
+
+        Without this, a user who picks a colour and draws without ever blurring
+        the picker would produce a stroke painted in the new colour while the
+        action log still showed the old one - the log would contradict the ink.
+        Committing here guarantees the color_change lands at a lower sequence
+        than the stroke's first point.
+
+        The same applies to an open slider interaction: the stroke below is
+        painted with `currentWidthRef`, so the width_change must be logged
+        before it or the log would contradict the ink.
+      */
+      commitColorInteraction()
+      commitWidthInteraction()
+
       const settings = settingsRef.current
       const point = buildPoint(sample)
       currentStrokeRef.current = {
         id: crypto.randomUUID(),
         tool: settings.tool,
-        color: settings.color,
-        width: settings.width,
+        // The ref, not the mirrored state: a colour previewed earlier in the
+        // same batch is already the colour on screen.
+        color: currentColorRef.current,
+        // The ref for the same reason as the colour: a width previewed earlier
+        // in this batch is already the width on screen.
+        width: currentWidthRef.current,
         startedAtMs: point.timeMs,
         hasPressureSamples: point.pressure !== null,
         points: [point],
       }
       setLastPointerType(sample.pointerType)
     },
-    [buildPoint],
+    [buildPoint, commitColorInteraction, commitWidthInteraction],
   )
 
   const extendStroke = useCallback(
@@ -298,33 +544,45 @@ export function useDrawingSession(): UseDrawingSessionResult {
     (next: DrawingTool): void => {
       const previous = settingsRef.current.tool
       if (previous === next) return
+      settingsRef.current = { ...settingsRef.current, tool: next }
       setToolState(next)
-      savePreferences({ ...settingsRef.current, tool: next })
+      persistPreferences()
       logAction('tool_change', { from: previous, to: next })
     },
-    [logAction],
+    [logAction, persistPreferences],
   )
 
   const setColor = useCallback(
     (next: string): void => {
-      const previous = settingsRef.current.color
+      // Any half-open picker interaction is settled FIRST, so a direct
+      // selection can never be swallowed into someone else's `from`/`to` pair -
+      // and `previous` is read afterwards, because settling may have moved it.
+      commitColorInteraction()
+      const previous = currentColorRef.current
       if (previous === next) return
+      currentColorRef.current = next
       setColorState(next)
-      savePreferences({ ...settingsRef.current, color: next })
+      persistPreferences()
       logAction('color_change', { from: previous, to: next })
     },
-    [logAction],
+    [commitColorInteraction, logAction, persistPreferences],
   )
 
   const setWidth = useCallback(
     (next: number): void => {
-      const previous = settingsRef.current.width
+      // Any half-open slider interaction is settled FIRST, so a direct or
+      // scripted change can never be swallowed into someone else's `from`/`to`
+      // pair - and `previous` is read afterwards, because settling may have
+      // moved it. Mirrors setColor exactly.
+      commitWidthInteraction()
+      const previous = currentWidthRef.current
       if (previous === next) return
+      currentWidthRef.current = next
       setWidthState(next)
-      savePreferences({ ...settingsRef.current, width: next })
+      persistPreferences()
       logAction('width_change', { from: previous, to: next })
     },
-    [logAction],
+    [commitWidthInteraction, logAction, persistPreferences],
   )
 
   /**
@@ -378,7 +636,16 @@ export function useDrawingSession(): UseDrawingSessionResult {
 
   const startNewSession = useCallback((): void => {
     currentStrokeRef.current = null
+    // An interaction left open by the previous session must not commit into the
+    // new log; the colour and width themselves are kept, only the pending
+    // records are dropped.
+    colorInteractionFromRef.current = null
+    widthInteractionFromRef.current = null
     sequenceRef.current = 0
+    // A new session measures its own canvas: the next real layout size latches
+    // afresh, so a window resized during the previous session cannot carry a
+    // stale descriptor into this one.
+    logicalCanvasRef.current = null
     clockRef.current = createSessionClock()
     setStrokes([])
     setActions([])
@@ -409,6 +676,18 @@ export function useDrawingSession(): UseDrawingSessionResult {
    */
   const loadSession = useCallback((session: DrawingSession): void => {
     currentStrokeRef.current = null
+    colorInteractionFromRef.current = null
+    widthInteractionFromRef.current = null
+
+    /*
+      The imported file's own canvas becomes the logical canvas.
+
+      This is what makes a round trip faithful: re-exporting an imported session
+      on a differently sized screen must not restamp its points with this
+      screen's geometry. The descriptor belongs to the recording, not to the
+      machine that happens to be reading it.
+    */
+    logicalCanvasRef.current = { ...session.canvas }
 
     let maxSequence = 0
     let maxTimeMs = 0
@@ -450,17 +729,16 @@ export function useDrawingSession(): UseDrawingSessionResult {
   }, [])
 
   const buildSession = useCallback(
-    (canvasSize: Size): DrawingSession => {
+    (fallbackSize: Size): DrawingSession => {
       const session: DrawingSession = {
         schemaVersion: CURRENT_SCHEMA_VERSION,
         id: meta.id,
         createdAt: meta.createdAt,
         startedAt: meta.startedAt,
-        canvas: {
-          width: Math.max(1, Math.round(canvasSize.width)),
-          height: Math.max(1, Math.round(canvasSize.height)),
-          devicePixelRatio: window.devicePixelRatio,
-        },
+        // The latched logical canvas, so a resize between capture and export
+        // cannot re-file the raw points against a size they were never
+        // recorded in. See latchLogicalCanvas.
+        canvas: logicalCanvasRef.current ?? toCanvasDescriptor(fallbackSize),
         // `order` is the index in the append-only history, assigned here so it
         // is always a clean 0..n-1 permutation regardless of undo and redo.
         strokes: strokes.map((stroke, index) => ({ ...stroke, order: index })),
@@ -493,11 +771,19 @@ export function useDrawingSession(): UseDrawingSessionResult {
     setTool,
     setColor,
     setWidth,
+    beginColorInteraction,
+    previewColor,
+    commitColorInteraction,
+    beginWidthInteraction,
+    previewWidth,
+    commitWidthInteraction,
     undo,
     redo,
     clear,
     startNewSession,
     loadSession,
+    latchLogicalCanvas,
+    getLogicalCanvas,
     buildSession,
   }
 }

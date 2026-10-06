@@ -33,9 +33,14 @@ function JsonImportControlComponent({
       <input
         ref={inputRef}
         type="file"
-        accept="application/json,.json"
+        /*
+          Both encodings are offered, but the picker filter is a convenience,
+          not the decision: the reader sniffs the bytes, so a mislabelled file
+          still opens correctly.
+        */
+        accept="application/json,.json,application/gzip,.gz,.json.gz"
         className={styles.hiddenFileInput}
-        aria-label="انتخاب فایل JSON جلسه"
+        aria-label="انتخاب فایل JSON یا JSON.GZ جلسه"
         onChange={(event) => {
           const file = event.target.files?.[0]
           event.target.value = ''
